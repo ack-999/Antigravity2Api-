@@ -7,6 +7,9 @@
 - **Thought Signatures（思考签名）**：按 Gemini 官方规范透传 `thoughtSignature`，在 thinking / 工具调用等场景中确保下一轮请求能原样带回签名，避免 `missing thought_signature` 类校验错误。
 - **工具调用（Tool Use）**：支持 Claude `tool_use` / `tool_result` 与 Gemini `functionCall` / `functionResponse` 的互转，兼容需要工具调用的客户端/工作流。
 
+已知问题：
+在使用MCP时，claude转为antigravity的v1internal接口所使用的gemini格式后，v1internal内部判断当前model是claude，会将request转回claude格式，但是其内部接口又不能使用claude的一些字段，所以MCP会有各种奇奇怪怪的问题，这也是使用原生Antigravity时会出现各种MCP问题的原因。只能看google后续会不会去修Antigravity的MCP，本项目暂时不想去改有关于MCP的问题。
+
 > **推荐启动方式**：在项目根目录运行 `npm run start`（或 `node src/server.js`）。本项目会以当前工作目录（`process.cwd()`）定位 `.env`、`auths/`、`log/`；如果你在 `src/` 目录运行，则对应路径会变成 `src/.env`、`src/auths/`、`src/log/`。
 
 启动后可直接访问管理界面：`http://localhost:3000/`（端口以 `AG2API_PORT` 为准，默认 3000）。
