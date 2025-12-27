@@ -10,6 +10,12 @@
 // 但 Claude Code 下一次请求不会回传 `tool_use.signature`（非标准字段），
 // 所以需要代理进程内维护一份 tool_use.id -> thoughtSignature 的映射，并在转回 v1internal 时补回。
 const toolThoughtSignatures = new Map(); // tool_use.id -> thoughtSignature
+const crypto = require("crypto");
+
+function makeToolUseId() {
+  // Claude Code expects tool_use ids to look like official "toolu_*" ids.
+  return `toolu_vrtx_${crypto.randomBytes(16).toString("base64url")}`;
+}
 
 function isDebugEnabled() {
   const raw = process.env.AG2API_DEBUG;
@@ -360,7 +366,7 @@ class PartProcessor {
   // 处理函数调用
   processFunctionCall(fc, sigToUse) {
     // 签名已在 process() 中处理：FC 自带签名优先，否则使用 thinking 暂存的签名
-    const toolId = fc.id || `${fc.name}-${Math.random().toString(36).substring(2, 10)}`;
+    const toolId = typeof fc.id === "string" && fc.id ? fc.id : makeToolUseId();
     
     const toolUseBlock = {
       type: "tool_use",
@@ -460,7 +466,8 @@ class NonStreamingProcessor {
       this.hasToolCall = true;
       
       // 优先复用上游的 functionCall.id
-      const toolId = part.functionCall.id || `${part.functionCall.name}-${Math.random().toString(36).substring(2, 10)}`;
+      const toolId =
+        typeof part.functionCall.id === "string" && part.functionCall.id ? part.functionCall.id : makeToolUseId();
       
       const toolUseBlock = {
         type: "tool_use",
