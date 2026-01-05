@@ -87,6 +87,43 @@ function generateRequestId() {
   return `REQ-${Date.now().toString(36)}-${(++requestCounter).toString(36).padStart(4, "0")}`.toUpperCase();
 }
 
+const ANSI_REGEX = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+
+function stripAnsi(value = "") {
+  return String(value).replace(ANSI_REGEX, "");
+}
+
+function isFullWidthCodePoint(codePoint = 0) {
+  return (
+    (codePoint >= 0x1100 && codePoint <= 0x115f) ||
+    codePoint === 0x2329 ||
+    codePoint === 0x232a ||
+    (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+    (codePoint >= 0x1f300 && codePoint <= 0x1f64f) ||
+    (codePoint >= 0x1f900 && codePoint <= 0x1f9ff) ||
+    (codePoint >= 0x20000 && codePoint <= 0x3fffd)
+  );
+}
+
+function getDisplayWidth(input = "") {
+  const clean = stripAnsi(input);
+  let width = 0;
+
+  for (const char of [...clean]) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) continue;
+    width += isFullWidthCodePoint(codePoint) ? 2 : 1;
+  }
+
+  return width;
+}
+
 const server = http.createServer(async (req, res) => {
   const requestId = generateRequestId();
   const startTime = Date.now();
@@ -295,14 +332,21 @@ const server = http.createServer(async (req, res) => {
 
   server.listen(PORT, HOST, () => {
     const separator = Box.horizontal.repeat(56);
+    const innerWidth = separator.length;
+    const formatBoxLine = (text = "") => {
+      const visibleWidth = getDisplayWidth(text);
+      const padding = Math.max(0, innerWidth - visibleWidth - 2);
+      return `${Colors.green}${Box.vertical}${Colors.reset} ${text}${" ".repeat(padding)} ${Colors.green}${Box.vertical}${Colors.reset}`;
+    };
     
     console.log(`\n${Colors.green}${Box.topLeft}${separator}${Box.topRight}${Colors.reset}`);
-    console.log(`${Colors.green}${Box.vertical}${Colors.reset}  ${Colors.bold}🚀 Antigravity2API 服务器已启动${Colors.reset}${" ".repeat(25)}${Colors.green}${Box.vertical}${Colors.reset}`);
-    console.log(`${Colors.green}${Box.vertical}${Colors.reset}${" ".repeat(56)}${Colors.green}${Box.vertical}${Colors.reset}`);
-    console.log(`${Colors.green}${Box.vertical}${Colors.reset}  ${Colors.dim}📍 地址:${Colors.reset} http://${HOST}:${PORT}${" ".repeat(Math.max(0, 35 - HOST.length - String(PORT).length))}${Colors.green}${Box.vertical}${Colors.reset}`);
-    console.log(`${Colors.green}${Box.vertical}${Colors.reset}  ${Colors.dim}🔗 Gemini:${Colors.reset} http://${HOST}:${PORT}/v1beta${" ".repeat(Math.max(0, 28 - HOST.length - String(PORT).length))}${Colors.green}${Box.vertical}${Colors.reset}`);
-    console.log(`${Colors.green}${Box.vertical}${Colors.reset}  ${Colors.dim}🔗 Claude:${Colors.reset} http://${HOST}:${PORT}/v1/messages${" ".repeat(Math.max(0, 24 - HOST.length - String(PORT).length))}${Colors.green}${Box.vertical}${Colors.reset}`);
-    console.log(`${Colors.green}${Box.vertical}${Colors.reset}  ${Colors.dim}📝 日志:${Colors.reset} ${logger.logFile.length > 40 ? "..." + logger.logFile.slice(-37) : logger.logFile}${" ".repeat(Math.max(0, 46 - Math.min(40, logger.logFile.length)))}${Colors.green}${Box.vertical}${Colors.reset}`);
+    console.log(formatBoxLine(`${Colors.bold}🚀 Antigravity2API 服务器已启动${Colors.reset}`));
+    console.log(formatBoxLine());
+    console.log(formatBoxLine(`${Colors.dim}📍 地址:${Colors.reset} http://${HOST}:${PORT}`));
+    console.log(formatBoxLine(`${Colors.dim}🔗 Gemini:${Colors.reset} http://${HOST}:${PORT}/v1beta`));
+    console.log(formatBoxLine(`${Colors.dim}🔗 Claude:${Colors.reset} http://${HOST}:${PORT}/v1/messages`));
+    const logPath = logger.logFile.length > 40 ? "..." + logger.logFile.slice(-37) : logger.logFile;
+    console.log(formatBoxLine(`${Colors.dim}📝 日志:${Colors.reset} ${logPath}`));
     console.log(`${Colors.green}${Box.bottomLeft}${separator}${Box.bottomRight}${Colors.reset}\n`);
 
     if (authManager.accounts && authManager.accounts.length === 0) {
