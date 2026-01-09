@@ -215,8 +215,11 @@ class ClaudeApi {
 
       this.logDebug("Claude Payload Request", requestData);
 
-      const method = requestData.stream ? "streamGenerateContent" : "generateContent";
-      const queryString = requestData.stream ? "?alt=sse" : "";
+      const clientWantsStream = !!requestData.stream;
+      // Always call upstream via streamGenerateContent to avoid generateContent 429 issues,
+      // then aggregate SSE into JSON when the client is non-streaming.
+      const method = "streamGenerateContent";
+      const queryString = "?alt=sse";
 
       const mcpModel = getMcpSwitchModel();
       let baseModel = requestData.model;
@@ -235,6 +238,10 @@ class ClaudeApi {
             inferFinalModelForQuota,
           }));
       }
+
+      const transformOutOptions = {};
+      if (mcpModel) transformOutOptions.overrideModel = baseModel;
+      if (!clientWantsStream) transformOutOptions.forceNonStreaming = true;
 
       let loggedTransformed = false;
       const response = await this.upstream.callV1Internal(method, {
@@ -296,7 +303,7 @@ class ClaudeApi {
 
       const convertedResponse = await transformClaudeResponseOut(
         responseForTransform,
-        mcpModel ? { overrideModel: baseModel } : undefined,
+        transformOutOptions,
       );
 
       let finalResponseBody = convertedResponse.body;
