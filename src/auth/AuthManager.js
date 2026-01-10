@@ -1,7 +1,7 @@
 const path = require("path");
-const fs = require("fs/promises");
 
 const RateLimiter = require("./RateLimiter");
+const dbStorage = require("./DbStorage");
 const TokenRefresher = require("./TokenRefresher");
 const httpClient = require("./httpClient");
 
@@ -83,7 +83,6 @@ function sanitizeCredentialFileName(fileName) {
 
 class AuthManager {
   constructor(options = {}) {
-    this.authDir = options.authDir || path.resolve(process.cwd(), "auths");
     this.accounts = [];
     // Claude/Gemini quotas are independent; keep rotation state per group.
     this.currentAccountIndexByGroup = { claude: 0, gemini: 0 };
@@ -142,7 +141,7 @@ class AuthManager {
   getAccountsSummary() {
     return this.accounts.map((account, index) => ({
       index,
-      file: path.basename(account.filePath),
+      file: account.keyName,
       email: account.creds?.email || null,
       projectId: account.creds?.projectId || null,
       expiry_date: Number.isFinite(account.creds?.expiry_date) ? account.creds.expiry_date : null,
@@ -173,7 +172,7 @@ class AuthManager {
     if (this.accounts.length <= 1) return false;
     const nextIndex = (this.getCurrentAccountIndex(g) + 1) % this.accounts.length;
     this.setCurrentAccountIndex(g, nextIndex);
-    const accountName = path.basename(this.accounts[nextIndex].filePath);
+    const accountName = this.accounts[nextIndex].keyName;
     this.logAccount(`轮换账户`, {
       group: g,
       account: accountName,
@@ -184,7 +183,7 @@ class AuthManager {
 
   async deleteAccountByFile(fileName) {
     const safeName = sanitizeCredentialFileName(fileName);
-    const idx = this.accounts.findIndex((a) => path.basename(a.filePath) === safeName);
+    const idx = this.accounts.findIndex((a) => a.keyName === safeName);
     if (idx === -1) {
       return false;
     }
@@ -198,7 +197,7 @@ class AuthManager {
       account.refreshTimer = null;
     }
 
-    await fs.unlink(account.filePath).catch(() => {});
+    await dbStorage.delete(account.keyName);
     this.accounts.splice(idx, 1);
 
     for (const group of ["claude", "gemini"]) {
@@ -221,34 +220,27 @@ class AuthManager {
     this.accounts = [];
     this.currentAccountIndexByGroup = { claude: 0, gemini: 0 };
     try {
-      // Ensure auth directory exists
-      try {
-        await fs.access(this.authDir);
-      } catch {
-        await fs.mkdir(this.authDir, { recursive: true });
-      }
+      await dbStorage.init();
 
-      const files = await fs.readdir(this.authDir);
-      const candidates = files.filter((f) => f.endsWith(".json") && !f.startsWith("package") && f !== "tsconfig.json");
+      const entries = await dbStorage.list();
+      const candidates = entries.filter(
+        (e) => e.key.endsWith(".json") && !e.key.startsWith("package") && e.key !== "tsconfig.json"
+      );
 
       let loadedCount = 0;
-      for (const file of candidates) {
+      for (const entry of candidates) {
         try {
-          const filePath = path.join(this.authDir, file);
-          const content = await fs.readFile(filePath, "utf8");
-          try {
-            const creds = JSON.parse(content);
-            if (creds.access_token && creds.refresh_token && (creds.token_type || creds.scope)) {
-              this.accounts.push({
-                filePath,
-                creds,
-                refreshPromise: null,
-                refreshTimer: null,
-                projectPromise: null,
-              });
-              loadedCount++;
-            }
-          } catch (parseErr) {}
+          const creds = entry.data;
+          if (creds.access_token && creds.refresh_token && (creds.token_type || creds.scope)) {
+            this.accounts.push({
+              keyName: entry.key,
+              creds,
+              refreshPromise: null,
+              refreshTimer: null,
+              projectPromise: null,
+            });
+            loadedCount++;
+          }
         } catch (e) {}
       }
 
@@ -320,7 +312,7 @@ class AuthManager {
       }
 
       account.creds.projectId = projectId;
-      await fs.writeFile(account.filePath, JSON.stringify(account.creds, null, 2));
+      await dbStorage.set(account.keyName, account.creds);
       this.log("info", `✅ 获取 projectId 成功: ${projectId}`);
       return projectId;
     })();
@@ -346,7 +338,7 @@ class AuthManager {
     }
 
     if (account.creds.expiry_date < +new Date()) {
-      const accountName = path.basename(account.filePath);
+      const accountName = account.keyName;
       this.log("info", `Refreshing token for [${quotaGroup}] account ${accountIndex + 1} (${accountName})...`);
       await this.refreshToken(account);
     }
@@ -381,12 +373,7 @@ class AuthManager {
     const previousGeminiIndex = this.getCurrentAccountIndex("gemini");
     const hadAccountsBefore = this.accounts.length > 0;
 
-    // Ensure auth directory exists
-    try {
-      await fs.access(this.authDir);
-    } catch {
-      await fs.mkdir(this.authDir, { recursive: true });
-    }
+    await dbStorage.init();
 
     // Fetch projectId：先尝试 API 获取；如果没有，且检测到 paidTier 则随机生成
     let projectId = await this.fetchProjectId(formattedData.access_token);
@@ -406,7 +393,7 @@ class AuthManager {
     const email = formattedData.email;
 
     // Check for duplicates
-    let targetFilePath = null;
+    let targetKeyName = null;
     let existingAccountIndex = -1;
 
     if (email) {
@@ -425,7 +412,7 @@ class AuthManager {
         }
 
         if (accEmail && accEmail === email) {
-          targetFilePath = acc.filePath;
+          targetKeyName = acc.keyName;
           existingAccountIndex = i;
           this.log("info", `Found existing account for ${email}, updating...`);
           break;
@@ -433,36 +420,41 @@ class AuthManager {
       }
     }
 
-    // Determine filename
+    // Determine key name
+    let oldKeyNameToDelete = null;
     if (existingAccountIndex !== -1) {
-      targetFilePath = this.accounts[existingAccountIndex].filePath;
+      targetKeyName = this.accounts[existingAccountIndex].keyName;
 
-      // Migrate to email-based filename if possible
+      // Migrate to email-based key name if possible
       if (email) {
         const safeEmail = email.replace(/[^a-zA-Z0-9@.]/g, "_");
-        const newPath = path.join(this.authDir, `${safeEmail}.json`);
+        const newKeyName = `${safeEmail}.json`;
 
-        if (targetFilePath !== newPath) {
-          try {
-            await fs.unlink(targetFilePath).catch(() => {});
-            targetFilePath = newPath;
-            this.accounts[existingAccountIndex].filePath = newPath;
-            this.log("info", `Renamed credentials to ${path.basename(newPath)}`);
-          } catch (e) {
-            this.log("error", `Error renaming file: ${e.message || e}`);
-          }
+        if (targetKeyName !== newKeyName) {
+          oldKeyNameToDelete = targetKeyName;
+          targetKeyName = newKeyName;
+          this.accounts[existingAccountIndex].keyName = newKeyName;
+          this.log("info", `Renamed credentials to ${newKeyName}`);
         }
       }
     } else {
       if (email) {
         const safeEmail = email.replace(/[^a-zA-Z0-9@.]/g, "_");
-        targetFilePath = path.join(this.authDir, `${safeEmail}.json`);
+        targetKeyName = `${safeEmail}.json`;
       } else {
-        targetFilePath = path.join(this.authDir, `oauth-${Date.now()}.json`);
+        targetKeyName = `oauth-${Date.now()}.json`;
       }
     }
 
-    await fs.writeFile(targetFilePath, JSON.stringify(formattedData, null, 2));
+    await dbStorage.set(targetKeyName, formattedData);
+
+    if (oldKeyNameToDelete) {
+      try {
+        await dbStorage.delete(oldKeyNameToDelete);
+      } catch (e) {
+        this.log("warn", `Failed to delete old key "${oldKeyNameToDelete}": ${e.message || e}`);
+      }
+    }
 
     let targetAccount;
     if (existingAccountIndex !== -1) {
@@ -470,7 +462,7 @@ class AuthManager {
       targetAccount = this.accounts[existingAccountIndex];
     } else {
       targetAccount = {
-        filePath: targetFilePath,
+        keyName: targetKeyName,
         creds: formattedData,
         refreshPromise: null,
         refreshTimer: null,
@@ -542,8 +534,8 @@ class AuthManager {
         }
 
         account.creds = data;
-        await fs.writeFile(account.filePath, JSON.stringify(data, null, 2));
-        this.log("info", `✅ Token refreshed for ${path.basename(account.filePath)}`);
+        await dbStorage.set(account.keyName, data);
+        this.log("info", `✅ Token refreshed for ${account.keyName}`);
 
         this.tokenRefresher.scheduleRefresh(account);
 
