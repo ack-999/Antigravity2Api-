@@ -1,5 +1,3 @@
-const path = require("path");
-
 class TokenRefresher {
   constructor(options = {}) {
     this.logger = options.logger || null;
@@ -50,7 +48,7 @@ class TokenRefresher {
     if (delay < 0) delay = 0;
 
     account.refreshTimer = setTimeout(() => {
-      const accountName = path.basename(account.filePath);
+      const accountName = account.keyName || "unknown";
       this.logAccount("自动刷新 Token", { account: accountName });
       this.refresh(account).catch((e) => {
         this.log("error", `❌ 自动刷新失败 (${accountName}): ${e.message || e}`);
