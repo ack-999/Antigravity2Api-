@@ -1620,11 +1620,11 @@ async function buildNonStreamingWebSearchMessage(rawJSON, options = {}) {
     content: results,
   });
 
-  // citations-only blocks（简化版：每个 support 取第一个 groundingChunkIndex）
+  // citations-only blocks（每个 support 的 groundingChunkIndices 都生成 citation）
   for (const support of supports) {
-    const citation = buildCitationFromSupport(results, support);
-    if (!citation) continue;
-    content.push({ type: "text", text: "", citations: [citation] });
+    const citations = buildCitationsFromSupport(results, support);
+    if (!citations.length) continue;
+    content.push({ type: "text", text: "", citations });
   }
 
   if (answerText) content.push({ type: "text", text: answerText });
@@ -1839,29 +1839,73 @@ function isVertexGroundingRedirectUrl(url) {
   );
 }
 
+function unwrapGoogleRedirectUrl(url) {
+  if (typeof url !== "string" || (!url.startsWith("http://") && !url.startsWith("https://"))) return url;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (!(host === "google.com" || host.endsWith(".google.com"))) return url;
+    if (!u.pathname.endsWith("/url")) return url;
+    const target = u.searchParams.get("q") || u.searchParams.get("url") || "";
+    if (!target) return url;
+    try {
+      return decodeURIComponent(target);
+    } catch {
+      return target;
+    }
+  } catch {
+    return url;
+  }
+}
+
 async function fetchFinalUrl(url, timeoutMs) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { method: "HEAD", redirect: "follow", signal: controller.signal });
-    // node-fetch/undici: final URL is exposed as res.url
-    if (res && typeof res.url === "string" && res.url) return res.url;
-    return url;
-  } catch (e) {
-    // Some hosts don't support HEAD; fallback to GET
-    try {
-      const res = await fetch(url, { method: "GET", redirect: "follow", signal: controller.signal });
-      const finalUrl = res && typeof res.url === "string" && res.url ? res.url : url;
+    const headers = isVertexGroundingRedirectUrl(url)
+      ? {
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+      : undefined;
+
+    const getNextLocation = async (currentUrl, method) => {
       try {
-        if (res?.body?.cancel) await res.body.cancel();
-      } catch {}
-      try {
-        if (res?.body?.destroy) res.body.destroy();
-      } catch {}
-      return finalUrl;
-    } catch {
-      return url;
+        const res = await fetch(currentUrl, {
+          method,
+          redirect: "manual",
+          signal: controller.signal,
+          headers,
+        });
+        const status = Number(res?.status) || 0;
+        const location = String(res?.headers?.get?.("location") || "").trim();
+        try {
+          if (res?.body?.cancel) await res.body.cancel();
+        } catch {}
+        try {
+          if (res?.body?.destroy) res.body.destroy();
+        } catch {}
+        if (status >= 300 && status < 400 && location) {
+          const resolved = new URL(location, currentUrl).toString();
+          return unwrapGoogleRedirectUrl(resolved);
+        }
+      } catch {
+        // ignore
+      }
+      return "";
+    };
+
+    let current = url;
+    for (let i = 0; i < 5; i++) {
+      const next =
+        (await getNextLocation(current, "HEAD")) ||
+        (await getNextLocation(current, "GET"));
+      if (!next || next === current) break;
+      current = next;
     }
+
+    return current;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -1874,7 +1918,7 @@ async function resolveVertexGroundingRedirectUrl(url) {
   if (cached && typeof cached.then === "function") return cached;
 
   const promise = (async () => {
-    const finalUrl = await fetchFinalUrl(url, 1500);
+    const finalUrl = await fetchFinalUrl(url, 5000);
     return finalUrl;
   })();
 
@@ -1896,8 +1940,9 @@ async function resolveWebSearchRedirectUrls(webSearch) {
 
   // Best-effort resolve (proxy-aware: global fetch is already patched in src/utils/proxy.js)
   await Promise.all(
-    results.slice(0, 10).map(async (result) => {
+    results.map(async (result) => {
       if (!result || typeof result.url !== "string" || !result.url) return;
+      if (!isVertexGroundingRedirectUrl(result.url)) return;
       const finalUrl = await resolveVertexGroundingRedirectUrl(result.url);
       if (finalUrl && finalUrl !== result.url) {
         result.url = finalUrl;
@@ -1907,23 +1952,25 @@ async function resolveWebSearchRedirectUrls(webSearch) {
   );
 }
 
-function buildCitationFromSupport(results, support) {
+function buildCitationsFromSupport(results, support) {
   const cited_text = support?.segment?.text;
-  if (typeof cited_text !== "string" || cited_text.length === 0) return null;
+  if (typeof cited_text !== "string" || cited_text.length === 0) return [];
 
-  const idx = Array.isArray(support?.groundingChunkIndices) ? support.groundingChunkIndices[0] : null;
-  if (typeof idx !== "number") return null;
-
-  const result = results[idx];
-  if (!result) return null;
-
-  return {
-    type: "web_search_result_location",
-    cited_text,
-    url: result.url,
-    title: result.title,
-    encrypted_index: stableEncryptedContent({ url: result.url, title: result.title, cited_text }),
-  };
+  const indices = Array.isArray(support?.groundingChunkIndices) ? support.groundingChunkIndices : [];
+  const citations = [];
+  for (const idx of indices) {
+    if (typeof idx !== "number") continue;
+    const result = results[idx];
+    if (!result) continue;
+    citations.push({
+      type: "web_search_result_location",
+      cited_text,
+      url: result.url,
+      title: result.title,
+      encrypted_index: stableEncryptedContent({ url: result.url, title: result.title, cited_text }),
+    });
+  }
+  return citations;
 }
 
 function emitWebSearchBlocks(state) {
@@ -1966,10 +2013,12 @@ function emitWebSearchBlocks(state) {
   const results = Array.isArray(state.webSearch.results) ? state.webSearch.results : [];
   const supports = Array.isArray(state.webSearch.supports) ? state.webSearch.supports : [];
   for (const support of supports) {
-    const citation = buildCitationFromSupport(results, support);
-    if (!citation) continue;
+    const citations = buildCitationsFromSupport(results, support);
+    if (!citations.length) continue;
     state.startBlock(StreamingState.BLOCK_TEXT, { citations: [], type: "text", text: "" });
-    state.emitDelta("citations_delta", { citation });
+    for (const citation of citations) {
+      state.emitDelta("citations_delta", { citation });
+    }
     state.endBlock();
   }
 
