@@ -1,5 +1,3 @@
-const path = require("path");
-
 function getAccountsPayload(authManager) {
   const accounts = authManager.getAccountsSummary();
   return {

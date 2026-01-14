@@ -1,5 +1,3 @@
-const path = require("path");
-
 const RateLimiter = require("./RateLimiter");
 const dbStorage = require("./DbStorage");
 const TokenRefresher = require("./TokenRefresher");
@@ -350,7 +348,7 @@ class AuthManager {
     }
 
     if (account.creds.expiry_date < +new Date()) {
-      const accountName = path.basename(account.filePath);
+      const accountName = account.keyName;
       this.log("info", `Refreshing token for [${logGroup}] account ${accountIndex + 1} (${accountName})...`);
       await this.refreshToken(account);
     }
@@ -384,7 +382,7 @@ class AuthManager {
     }
 
     if (account.creds.expiry_date < +new Date()) {
-      const accountName = path.basename(account.filePath);
+      const accountName = account.keyName;
       this.log("info", `Refreshing token for [${logGroup}] account ${accountIndex + 1} (${accountName})...`);
       await this.refreshToken(account);
     }
