@@ -1,10 +1,39 @@
 const crypto = require("crypto");
 
 const V1INTERNAL_BASE_URL = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
+const DEFAULT_CLOUDCODE_BASE_URLS = [
+  "https://cloudcode-pa.googleapis.com",
+  "https://daily-cloudcode-pa.sandbox.googleapis.com",
+];
 
 function buildV1InternalUrl(method, queryString = "") {
   const qs = queryString ? String(queryString) : "";
   return `${V1INTERNAL_BASE_URL}:${method}${qs}`;
+}
+
+function getCloudCodeBaseUrls() {
+  const raw = process.env.AG2API_CLOUDCODE_BASE_URLS;
+  if (raw && String(raw).trim()) {
+    const urls = String(raw)
+      .split(",")
+      .map((u) => String(u || "").trim())
+      .filter(Boolean);
+    if (urls.length > 0) return urls;
+  }
+  return DEFAULT_CLOUDCODE_BASE_URLS;
+}
+
+function buildCloudCodeUrl(baseUrl, method, queryString = "") {
+  const base = String(baseUrl || "").trim().replace(/\/+$/, "");
+  const qs = queryString ? String(queryString) : "";
+  return `${base}/v1internal:${method}${qs}`;
+}
+
+function shouldTryNextCloudCodeEndpoint(status) {
+  const code = Number.isFinite(status) ? status : null;
+  if (code === null) return true;
+  if (code === 404 || code === 408 || code === 429) return true;
+  return code >= 500 && code <= 599;
 }
 
 const CLOUDCODE_METADATA = {
@@ -217,22 +246,48 @@ async function fetchAvailableModels(accessToken, limiter, projectId) {
   await waitForApiSlot(limiter);
   // Pass projectId to get real quota data (not default 100%)
   const payload = projectId ? { project: projectId } : {};
-  const response = await fetch(buildV1InternalUrl("fetchAvailableModels"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "User-Agent": "antigravity/ windows/arm64",
-    },
-    body: JSON.stringify(payload),
-  });
+  const baseUrls = getCloudCodeBaseUrls();
+  let lastErr = null;
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
+  for (let i = 0; i < baseUrls.length; i++) {
+    const baseUrl = baseUrls[i];
+    try {
+      const response = await fetch(buildCloudCodeUrl(baseUrl, "fetchAvailableModels"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": "antigravity/ windows/arm64",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const data = await response.json().catch(() => ({}));
+        return data.models || {};
+      }
+
+      const text = await response.text().catch(() => "");
+      const err = new Error(
+        `Failed to fetch models: ${response.status} ${response.statusText}${text ? ` ${text}` : ""}`.trim()
+      );
+      err.status = response.status;
+      lastErr = err;
+
+      if (i < baseUrls.length - 1 && shouldTryNextCloudCodeEndpoint(response.status)) {
+        continue;
+      }
+      throw err;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (i < baseUrls.length - 1) {
+        continue;
+      }
+      throw lastErr;
+    }
   }
 
-  const data = await response.json();
-  return data.models || {};
+  throw lastErr || new Error("Failed to fetch models");
 }
 
 async function fetchUserInfo(accessToken, limiter) {

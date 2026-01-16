@@ -219,6 +219,18 @@
     }
   }
 
+  async function reloadAccountsAndRender() {
+    try {
+      const res = await apiFetch("/admin/api/accounts/reload", { method: "POST", body: "{}" });
+      renderAccounts(res.data);
+      return;
+    } catch (e) {
+      // Fallback to normal refresh (will show 401 message if needed)
+    }
+
+    await refreshAccounts();
+  }
+
   function setOAuthInfo({ status, url, stateId }) {
     els.oauthStatus.textContent = status || "-";
     els.oauthState.textContent = stateId || "-";
@@ -485,6 +497,6 @@
 
   loadApiKey();
   bindEvents();
-  refreshAccounts();
+  reloadAccountsAndRender();
   refreshVersionInfo();
 })();

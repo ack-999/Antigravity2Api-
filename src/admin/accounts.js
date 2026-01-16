@@ -40,6 +40,13 @@ function formatLocalDateTime(date) {
   return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
 }
 
+function formatRemainingFractionAsPercent(remainingFraction) {
+  if (typeof remainingFraction !== "number" || !Number.isFinite(remainingFraction)) return "-";
+  const percent = remainingFraction * 100;
+  const text = percent.toFixed(2).replace(/\.?0+$/, "");
+  return `${text}%`;
+}
+
 async function getAccountQuota(authManager, fileName, upstreamClient) {
   const safeName = String(fileName || "").trim();
   const account = authManager.accounts.find((acc) => path.basename(acc.filePath) === safeName);
@@ -57,8 +64,7 @@ async function getAccountQuota(authManager, fileName, upstreamClient) {
       if (modelId.includes("gemini") || modelId.includes("claude")) {
         const m = models[modelId];
         const quota = m.quotaInfo || {};
-        const limit =
-          quota.remainingFraction !== undefined ? `${Math.round(quota.remainingFraction * 100)}%` : "-";
+        const limit = formatRemainingFractionAsPercent(quota.remainingFraction);
         let resetTimeMs = null;
         let reset = "-";
         if (quota.resetTime) {

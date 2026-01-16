@@ -151,7 +151,7 @@ class QuotaRefresher {
       const quotaInfo = models[modelId]?.quotaInfo || {};
       const remainingFraction = quotaInfo.remainingFraction;
       const remainingPercent =
-        remainingFraction !== undefined && remainingFraction !== null ? Math.round(remainingFraction * 100) : null;
+        typeof remainingFraction === "number" && Number.isFinite(remainingFraction) ? remainingFraction * 100 : null;
       const resetTime = quotaInfo.resetTime || null;
       const resetTimeMs = resetTime ? Date.parse(resetTime) : null;
 
@@ -401,7 +401,7 @@ class QuotaRefresher {
       const accountKey = this.getAccountKeyFromAccount(accounts[accountIndex]);
       const q = perModel ? perModel.get(accountKey) : null;
       const remainingPercent = Number.isFinite(q?.remainingPercent) ? q.remainingPercent : null;
-      if (remainingPercent === 0) continue;
+      if (remainingPercent !== null && remainingPercent <= 0) continue;
 
       const cooldownUntilMs = Number.isFinite(q?.cooldownUntilMs) ? q.cooldownUntilMs : 0;
       const cooldownActive = cooldownUntilMs > now;
@@ -452,7 +452,8 @@ class QuotaRefresher {
     if (knownActive.length > 0) {
       let best = 0;
       for (const c of knownActive) best = Math.max(best, c.remainingPercent);
-      finalists = knownActive.filter((c) => c.remainingPercent === best);
+      const eps = 1e-6;
+      finalists = knownActive.filter((c) => Math.abs(c.remainingPercent - best) <= eps);
     } else {
       finalists = active.filter((c) => c.remainingPercent === null);
     }
