@@ -112,7 +112,7 @@ AG2API_UPDATE_REPO=znlsl/Antigravity2Api
 - `AG2API_PROXY_ENABLED`：是否启用代理（true/false）
 - `AG2API_PROXY_URL`：代理地址
 - `AG2API_DEBUG`：是否开启 debug（true/false）
-- `AG2API_LOG_RETENTION_DAYS`：日志保留天数（默认 3；设为 0 表示不自动清理）
+- `AG2API_LOG_RETENTION_DAYS`：日志保留天数（默认 3；设为 0 表示不自动清理；当 >0 且服务长时间不重启时，会按该天数轮转日志文件，并在轮转后清理旧日志文件，避免单个日志无限增长）
 - `AG2API_RETRY_DELAY_MS`：网络错误 / 429 重试前的固定等待（毫秒，默认 1200）
 - `AG2API_QUOTA_REFRESH_S`：额度刷新间隔（秒；每次并发刷新所有账号；默认 300）
 - `AG2API_MCP_XML_ENABLED`：MCP XML 方案开关（仅 `mcp__*`）；开启后不透传 `mcp__* tools` 给 v1internal，改为 XML 协议桥接并在下游还原为 `tool_use/tool_result`
