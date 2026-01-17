@@ -77,6 +77,25 @@ async function writeResponse(res, apiResponse) {
   return res.end(JSON.stringify(body));
 }
 
+function safeWriteJson(res, statusCode, body) {
+  if (!res || res.writableEnded || res.destroyed) return;
+
+  try {
+    if (!res.headersSent) {
+      res.writeHead(statusCode, { ...CORS_HEADERS, "Content-Type": "application/json" });
+      res.end(JSON.stringify(body));
+      return;
+    }
+
+    // Headers already sent (usually streaming). Best-effort close without throwing.
+    res.end();
+  } catch (_) {
+    try {
+      res.destroy();
+    } catch (_) {}
+  }
+}
+
 const PORT = config.server?.port || 3000;
 const HOST = config.server?.host || "0.0.0.0";
 
@@ -369,13 +388,11 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     if (err && err.message === "INVALID_JSON") {
       logger.log("warn", `📝 无效的 JSON 请求体`, { requestId });
-      res.writeHead(400, { ...CORS_HEADERS, "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: { message: "Invalid JSON body" } }));
+      safeWriteJson(res, 400, { error: { message: "Invalid JSON body" } });
       return;
     }
     logger.logError("请求处理失败", err, { requestId });
-    res.writeHead(500, { ...CORS_HEADERS, "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: { message: "Internal Server Error" } }));
+    safeWriteJson(res, 500, { error: { message: "Internal Server Error" } });
   }
 });
 
