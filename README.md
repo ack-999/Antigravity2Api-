@@ -280,6 +280,16 @@ docker compose up -d --build
         *   `gemini-2.5-flash`
         *   `gemini-2.5-flash-lite`
         *   `gpt-oss-120b-medium`
+        *   `.claude/settings.json` 参考配置（示例）:
+            ```json
+            {
+              "ANTHROPIC_MODEL": "claude-opus-4-5-thinking",
+              "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gemini-3-flash",
+              "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-5-thinking",
+              "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-5-thinking",
+              "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            }
+            ```
     *   **Gemini API** 支持如下模型（可在 Gemini CLI 中使用 Claude 模型）:
         *   `claude-sonnet-4-5`
         *   `claude-sonnet-4-5-thinking`
@@ -291,6 +301,10 @@ docker compose up -d --build
         *   `gemini-2.5-flash`
         *   `gemini-2.5-flash-lite`
         *   `gpt-oss-120b-medium`
+        *   使用 Claude 的参考启动命令:
+            ```bash
+            gemini --model claude-opus-4-5-thinking
+            ```
 
 *   **OAuth 回调打不开**:
     *   授权完成后若跳到 `http://localhost:<port>/oauth-callback`，请把 `localhost:<port>` 改成当前服务地址再访问。
