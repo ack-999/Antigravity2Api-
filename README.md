@@ -279,7 +279,7 @@ docker compose up -d --build
         *   `gemini-3-flash`
         *   `gemini-2.5-flash`
         *   `gemini-2.5-flash-lite`
-        *   `gpt-oss-120b-medium`
+        *   `gpt-oss-120b-medium（仅限于chat）`
         *   `.claude/settings.json` 参考配置（示例）:
             ```json
             {
@@ -300,7 +300,7 @@ docker compose up -d --build
         *   `gemini-3-pro-image`
         *   `gemini-2.5-flash`
         *   `gemini-2.5-flash-lite`
-        *   `gpt-oss-120b-medium`
+        *   `gpt-oss-120b-medium（仅限于chat）`
         *   使用 Claude 的参考启动命令:
             ```bash
             gemini --model claude-opus-4-5-thinking
